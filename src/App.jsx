@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 // Connect to local backend if running locally, otherwise production
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
   ? 'http://localhost:5000' 
-  : 'https://demo-production-d485.up.railway.app';
+  : 'https://demo.railway.internal';
 
 // Date & Time formatting helpers
 const formatDate = (dateString) => {
