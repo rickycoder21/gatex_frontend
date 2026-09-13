@@ -1,9 +1,19 @@
+import gatexLogo from './assets/logo.png';
 import React, { useState, useEffect, useRef } from 'react';
 
-// Connect to local backend if running locally, otherwise production
-const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+// Default fallback backend URL
+const DEFAULT_API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
   ? 'http://localhost:5000' 
   : 'https://demo-production-d485.up.railway.app';
+
+// Helper to get custom injected API URL if configured by SuperAdmin
+const getInjectedApiUrl = () => {
+  try {
+    const saved = localStorage.getItem('gatex_injected_api_url');
+    if (saved && saved.trim()) return saved.trim().replace(/\/+$/, '');
+  } catch (e) {}
+  return DEFAULT_API_URL;
+};
 
 // Date & Time formatting helpers
 const formatDate = (dateString) => {
@@ -19,6 +29,17 @@ const formatTime = (dateString) => {
 };
 
 function App() {
+  // Dynamic Injected API URL State (Configurable by SuperAdmin)
+  const [apiUrl, setApiUrl] = useState(getInjectedApiUrl);
+  const [inputApiUrl, setInputApiUrl] = useState(getInjectedApiUrl);
+  const [apiTesting, setApiTesting] = useState(false);
+  const [apiTestMessage, setApiTestMessage] = useState('');
+  const [apiTestSuccess, setApiTestSuccess] = useState(false);
+  const [apiHealthStatus, setApiHealthStatus] = useState('checking'); // 'online' | 'offline' | 'checking'
+  const [showLoginApiConfig, setShowLoginApiConfig] = useState(false);
+
+  const API_BASE_URL = apiUrl;
+
   // Session Authentication State
   const [user, setUser] = useState(() => {
     try {
@@ -186,6 +207,79 @@ function App() {
     }, 400);
     return () => clearTimeout(delayDebounce);
   }, [searchQuery]);
+
+  // Check API health whenever active apiUrl changes
+  useEffect(() => {
+    let isMounted = true;
+    setApiHealthStatus('checking');
+    fetch(`${apiUrl}/api/societies`)
+      .then(res => {
+        if (isMounted) setApiHealthStatus(res.ok ? 'online' : 'offline');
+      })
+      .catch(() => {
+        if (isMounted) setApiHealthStatus('offline');
+      });
+    return () => { isMounted = false; };
+  }, [apiUrl]);
+
+  const handleTestApiUrl = async () => {
+    const target = (inputApiUrl || '').trim().replace(/\/+$/, '');
+    if (!target) {
+      setApiTestMessage('Please enter a valid URL.');
+      setApiTestSuccess(false);
+      return;
+    }
+    setApiTesting(true);
+    setApiTestMessage('');
+    try {
+      const res = await fetch(`${target}/api/societies`);
+      if (res.ok) {
+        setApiTestSuccess(true);
+        setApiTestMessage('✓ Connection successful! Backend endpoint is online.');
+      } else {
+        setApiTestSuccess(false);
+        setApiTestMessage(`⚠ Server reachable but returned status ${res.status}.`);
+      }
+    } catch (err) {
+      setApiTestSuccess(false);
+      setApiTestMessage(`✕ Could not reach server at ${target}. Verify address and network.`);
+    } finally {
+      setApiTesting(false);
+    }
+  };
+
+  const handleSaveApiUrl = async (e) => {
+    if (e) e.preventDefault();
+    const target = (inputApiUrl || '').trim().replace(/\/+$/, '');
+    if (!target) return;
+    localStorage.setItem('gatex_injected_api_url', target);
+    setApiUrl(target);
+    setInputApiUrl(target);
+
+    // Broadcast new API URL to the backend so all mobile apps automatically sync to it
+    try {
+      const res = await fetch(`${target}/api/system/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiUrl: target, message: 'Updated by SuperAdmin' })
+      });
+      if (res.ok) {
+        alert(`✓ API URL saved and broadcasted!\n\nAll mobile apps will automatically sync to:\n${target}`);
+      } else {
+        alert(`API URL saved locally in this browser: \n${target}\n(Backend returned ${res.status})`);
+      }
+    } catch (err) {
+      alert(`API URL saved locally in this browser: \n${target}\n(Could not reach backend to broadcast to mobile apps)`);
+    }
+  };
+
+  const handleResetApiUrl = () => {
+    localStorage.removeItem('gatex_injected_api_url');
+    setApiUrl(DEFAULT_API_URL);
+    setInputApiUrl(DEFAULT_API_URL);
+    setApiTestMessage('');
+    alert(`Reset to default server: \n${DEFAULT_API_URL}`);
+  };
 
   /* ==========================================================================
      API DATA FETCHING UTILITIES
@@ -909,7 +1003,7 @@ function App() {
       <div className="login-page-container">
         <div className="login-card">
           <div className="login-header">
-            <div className="brand-logo-circle">G</div>
+            <img src={gatexLogo} alt="GateX Logo" className="brand-logo-img" />
             <h2>GateX Terminal</h2>
             <p>Society Visitor Security & Tenancy Portal</p>
           </div>
@@ -1031,6 +1125,65 @@ function App() {
               {loginLoading ? 'Authenticating...' : `Login as ${loginRole === 'admin' ? 'Society Manager' : loginRole === 'owner' ? 'Flat Owner' : loginRole.toUpperCase()}`}
             </button>
           </form>
+
+          {/* SuperAdmin API URL Injector on Login Screen */}
+          <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e2e8f0', textAlign: 'center' }}>
+            <button
+              type="button"
+              onClick={() => setShowLoginApiConfig(!showLoginApiConfig)}
+              style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+            >
+              ⚙️ Server Endpoint: <span style={{ color: '#4f46e5', fontWeight: '600' }}>{apiUrl.replace(/^https?:\/\//, '')}</span>
+            </button>
+
+            {showLoginApiConfig && (
+              <div style={{ marginTop: '12px', textAlign: 'left', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569', textTransform: 'uppercase' }}>
+                  Inject New Backend API URL
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://... or http://localhost:5000"
+                  className="form-control"
+                  value={inputApiUrl}
+                  onChange={(e) => setInputApiUrl(e.target.value)}
+                  style={{ fontSize: '12px', marginTop: '4px', marginBottom: '8px', fontFamily: 'monospace' }}
+                />
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleTestApiUrl}
+                    disabled={apiTesting}
+                    style={{ fontSize: '11px', padding: '4px 10px' }}
+                  >
+                    {apiTesting ? 'Testing...' : 'Test'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={handleSaveApiUrl}
+                    style={{ fontSize: '11px', padding: '4px 10px' }}
+                  >
+                    Apply URL
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={handleResetApiUrl}
+                    style={{ fontSize: '11px', padding: '4px 10px' }}
+                  >
+                    Reset
+                  </button>
+                </div>
+                {apiTestMessage && (
+                  <div style={{ marginTop: '6px', fontSize: '11px', color: apiTestSuccess ? '#166534' : '#991b1b' }}>
+                    {apiTestMessage}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -1050,7 +1203,7 @@ function App() {
           {societyLogo ? (
             <img src={`${API_BASE_URL}${societyLogo}`} alt="Society Logo" className="society-header-logo" />
           ) : (
-            <div className="brand-icon">G</div>
+            <img src={gatexLogo} alt="GateX Logo" className="gatex-header-logo" />
           )}
           <div>
             <h1 className="brand-name">{currentSociety?.name || 'GateX'}</h1>
@@ -1080,6 +1233,82 @@ function App() {
       {/* ==================== 2A. SUPER ADMIN VIEW ==================== */}
       {user.role === 'superadmin' && (
         <main className="dashboard-container superadmin-grid">
+          {/* Global Backend API URL Injector Card */}
+          <section className="panel card api-config-card" style={{ gridColumn: '1 / -1', borderLeft: '4px solid #4f46e5' }}>
+            <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2>🌐 Global Backend API URL Injector</h2>
+                <p className="panel-subtitle">Inject or update the backend server URL whenever the API host changes</p>
+              </div>
+              <span style={{
+                padding: '4px 12px',
+                borderRadius: '20px',
+                fontSize: '12px',
+                fontWeight: '700',
+                backgroundColor: apiHealthStatus === 'online' ? '#dcfce7' : apiHealthStatus === 'checking' ? '#fef9c3' : '#fee2e2',
+                color: apiHealthStatus === 'online' ? '#166534' : apiHealthStatus === 'checking' ? '#854d0e' : '#991b1b',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <span style={{ fontSize: '8px' }}>●</span>
+                {apiHealthStatus === 'online' ? 'BACKEND ONLINE' : apiHealthStatus === 'checking' ? 'CHECKING...' : 'DISCONNECTED'}
+              </span>
+            </div>
+
+            <form onSubmit={handleSaveApiUrl} style={{ marginTop: '14px' }}>
+              <label style={{ fontSize: '13px', fontWeight: '600', color: '#475569', marginBottom: '6px', display: 'block' }}>
+                Active Backend API URL (Persisted in Client Storage)
+              </label>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <input
+                  type="url"
+                  placeholder="e.g. https://demo-production-d485.up.railway.app or http://192.168.1.10:5000"
+                  className="form-control"
+                  value={inputApiUrl}
+                  onChange={(e) => setInputApiUrl(e.target.value)}
+                  style={{ flex: 1, minWidth: '280px', fontFamily: 'monospace', fontWeight: '600' }}
+                  required
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleTestApiUrl}
+                  disabled={apiTesting}
+                >
+                  {apiTesting ? 'Testing...' : 'Test Connection'}
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                >
+                  Save & Apply URL
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={handleResetApiUrl}
+                  title="Reset to default detected server"
+                >
+                  Reset Default
+                </button>
+              </div>
+              {apiTestMessage && (
+                <div style={{
+                  marginTop: '10px',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: '500',
+                  backgroundColor: apiTestSuccess ? '#f0fdf4' : '#fef2f2',
+                  color: apiTestSuccess ? '#166534' : '#991b1b',
+                  border: `1px solid ${apiTestSuccess ? '#bbf7d0' : '#fecaca'}`
+                }}>
+                  {apiTestMessage}
+                </div>
+              )}
+            </form>
+          </section>
           {/* Add Society */}
           <section className="panel card">
             <div className="panel-title">
