@@ -281,6 +281,81 @@ function App() {
     alert(`Reset to default server: \n${DEFAULT_API_URL}`);
   };
 
+  const [backupLoading, setBackupLoading] = useState(false);
+
+  const handleTriggerAutoBackup = async () => {
+    setBackupLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/system/backups/run-now`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`✓ Backup Created Successfully!\n\nFile: ${data.filename}\nSocieties: ${data.counts?.societies || 0}\nUsers: ${data.counts?.users || 0}\nFlats: ${data.counts?.flats || 0}\nVisitors: ${data.counts?.visitors || 0}`);
+      } else {
+        alert(`Backup Failed: ${data.error || 'Server error'}`);
+      }
+    } catch (err) {
+      alert(`Backup Error: ${err.message}`);
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleDownloadBackup = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/system/backup`);
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `gatex_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Failed to download backup: ${err.message}`);
+    }
+  };
+
+  const handleRestoreBackup = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!window.confirm('Are you sure you want to restore the database from this backup file?')) {
+      e.target.value = '';
+      return;
+    }
+    try {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const payload = JSON.parse(event.target.result);
+          const res = await fetch(`${apiUrl}/api/system/restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const result = await res.json();
+          if (res.ok) {
+            alert(`✓ Database Restored Successfully!\n\nRestored:\n• ${result.restoredCounts?.societies || 0} Societies\n• ${result.restoredCounts?.users || 0} Users\n• ${result.restoredCounts?.flats || 0} Flats\n• ${result.restoredCounts?.visitors || 0} Visitor Logs`);
+            fetchSocieties();
+            fetchUsers();
+          } else {
+            alert(`Restore Failed: ${result.error || 'Server error'}`);
+          }
+        } catch (jsonErr) {
+          alert('Invalid backup JSON file.');
+        }
+      };
+      reader.readAsText(file);
+    } catch (err) {
+      alert(`Restore Error: ${err.message}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
   /* ==========================================================================
      API DATA FETCHING UTILITIES
      ========================================================================== */
@@ -1309,6 +1384,86 @@ function App() {
               )}
             </form>
           </section>
+
+          {/* Database Backup & Restore Card */}
+          <section className="panel card" style={{ borderLeft: '4px solid #10b981' }}>
+            <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <div>
+                <h2>💾 Database Backup & Restore (Persistent Data Safety)</h2>
+                <p className="panel-subtitle">Automated daily midnight backups, manual export to PC, and instant server restore</p>
+              </div>
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '5px 12px',
+                borderRadius: '20px',
+                fontSize: '12px',
+                fontWeight: '700',
+                backgroundColor: '#dcfce7',
+                color: '#15803d',
+                border: '1px solid #bbf7d0'
+              }}>
+                <span style={{ fontSize: '9px' }}>●</span>
+                <span>Auto-Backup: Active (Everyday @ 12:00 AM Night)</span>
+              </div>
+            </div>
+
+            <div style={{
+              backgroundColor: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              borderRadius: '8px',
+              padding: '12px 16px',
+              marginTop: '12px',
+              marginBottom: '16px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <strong style={{ fontSize: '13px', color: '#0f172a' }}>🕛 Automated Midnight Server Backup Engine</strong>
+                  <p style={{ fontSize: '12px', color: '#64748b', margin: '3px 0 0' }}>
+                    Runs automatically everyday at 12:00 AM night. Backups are preserved on the server disk with automatic 30-day rotation.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleTriggerAutoBackup}
+                  disabled={backupLoading}
+                  style={{ fontSize: '12px', fontWeight: '600' }}
+                >
+                  {backupLoading ? 'Backing Up...' : '⚡ Trigger Backup Now'}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleDownloadBackup}
+                style={{ backgroundColor: '#10b981', borderColor: '#10b981' }}
+              >
+                ⬇️ Download Full Backup (.json)
+              </button>
+
+              <label
+                className="btn btn-secondary"
+                style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', margin: 0 }}
+              >
+                ⬆️ Restore from Backup File (.json)
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleRestoreBackup}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            </div>
+            <p style={{ fontSize: '12px', color: '#64748b', marginTop: '10px' }}>
+              💡 <strong>Safety Guarantee:</strong> Backups contain all societies, users, flats, visitor logs, and configs. You can restore your data with 1-click anytime.
+            </p>
+          </section>
+
           {/* Add Society */}
           <section className="panel card">
             <div className="panel-title">
